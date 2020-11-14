@@ -1,3 +1,5 @@
+This is a fork of [SharpCifs.std](https://github.com/ume05rw/SharpCifs.Std) to fix a bug or two
+
 SharpCifs.Std
 ====
 
