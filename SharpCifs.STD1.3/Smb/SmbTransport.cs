@@ -93,78 +93,85 @@ namespace SharpCifs.Smb
         public static void ClearCachedConnections(bool force = false)
         {
             lock (typeof(SmbTransport))
-            lock (SmbConstants.Connections)
             {
-                var failedTransport = new List<SmbTransport>();
-
-                foreach (var transport in SmbConstants.Connections)
+                lock (SmbConstants.Connections)
                 {
-                    //強制破棄フラグONのとき、接続状態がどうであれ破棄する。
-                    if (force)
+                    List<SmbTransport> transportsToRemove = new List<SmbTransport>();
+
+                    foreach (var transport in SmbConstants.Connections)
                     {
-                        SmbConstants.Connections.Remove(transport);
-
-                        try { transport?.Disconnect(true); }
-                        catch (Exception) { }
-
-                        continue;
-                    }
-
-                    //即座に異常と分かるTransportは接続試行せず破棄対象にする。
-                    if (transport == null
-                        || transport.Socket == null
-                        || !transport.Socket.Connected)
-                    {
-                        SmbConstants.Connections.Remove(transport);
-
-                        try { transport?.Disconnect(true); }
-                        catch (Exception) { }
-
-                        continue;
-                    }
-
-
-                    //現在の接続状態を検証する。
-                    //https://msdn.microsoft.com/ja-jp/library/system.net.sockets.socket.connected(v=vs.110).aspx
-                    var isSocketBlocking = transport.Socket.Blocking;
-                    var isConnected = false;
-                    try
-                    {
-                        var tmpBytes = new byte[1];
-                        transport.Socket.Blocking = false;
-                        transport.Socket.Send(tmpBytes, 0, 0);
-                        isConnected = true;
-                    }
-                    catch (SocketException e)
-                    {
-                        if (e.SocketErrorCode == SocketError.WouldBlock)
+                        //強制破棄フラグONのとき、接続状態がどうであれ破棄する。
+                        if (force)
                         {
-                            //現在も接続中
+                            //SmbConstants.Connections.Remove(transport);
+                            transportsToRemove.Add(transport);
+
+                            try { transport?.Disconnect(true); }
+                            catch (Exception) { }
+
+                            continue;
+                        }
+
+                        //即座に異常と分かるTransportは接続試行せず破棄対象にする。
+                        if (transport == null
+                            || transport.Socket == null
+                            || !transport.Socket.Connected)
+                        {
+                            //SmbConstants.Connections.Remove(transport);
+                            transportsToRemove.Add(transport);
+
+                            try { transport?.Disconnect(true); }
+                            catch (Exception) { }
+
+                            continue;
+                        }
+
+
+                        //現在の接続状態を検証する。
+                        //https://msdn.microsoft.com/ja-jp/library/system.net.sockets.socket.connected(v=vs.110).aspx
+                        var isSocketBlocking = transport.Socket.Blocking;
+                        var isConnected = false;
+                        try
+                        {
+                            var tmpBytes = new byte[1];
+                            transport.Socket.Blocking = false;
+                            transport.Socket.Send(tmpBytes, 0, 0);
                             isConnected = true;
                         }
-                        else
+                        catch (SocketException e)
+                        {
+                            if (e.SocketErrorCode == SocketError.WouldBlock)
+                            {
+                                //現在も接続中
+                                isConnected = true;
+                            }
+                            else
+                            {
+                                //切断されている
+                                isConnected = false;
+                            }
+                        }
+                        catch (Exception)
                         {
                             //切断されている
                             isConnected = false;
                         }
-                    }
-                    catch (Exception)
-                    {
-                        //切断されている
-                        isConnected = false;
-                    }
-                    finally
-                    {
-                        transport.Socket.Blocking = isSocketBlocking;
+                        finally
+                        {
+                            transport.Socket.Blocking = isSocketBlocking;
+                        }
+
+                        if (!isConnected)
+                        {
+                            //SmbConstants.Connections.Remove(transport);
+                            transportsToRemove.Add(transport);
+
+                            try { transport?.Disconnect(true); }
+                            catch (Exception) { }
+                        }
                     }
 
-                    if (!isConnected)
-                    {
-                        SmbConstants.Connections.Remove(transport);
-
-                        try { transport?.Disconnect(true); }
-                        catch (Exception) { }
-                    }
+                    SmbConstants.Connections.RemoveAll(a => transportsToRemove.Contains(a));
                 }
             }
         }
@@ -372,10 +379,10 @@ namespace SharpCifs.Smb
                 //https://blogs.msdn.microsoft.com/dgorti/2005/09/18/only-one-usage-of-each-socket-address-protocolnetwork-addressport-is-normally-permitted/
                 Socket.Bind(new IPEndPoint(LocalAddr, 0));
 
-                Socket.Connect(new IPEndPoint(IPAddress.Parse(Address.GetHostAddress()), 
+                Socket.Connect(new IPEndPoint(IPAddress.Parse(Address.GetHostAddress()),
                                               139),
                                SmbConstants.ConnTimeout);
-                
+
                 Socket.SoTimeOut = SmbConstants.SoTimeout;
 
                 Out = Socket.GetOutputStream();
@@ -473,7 +480,7 @@ namespace SharpCifs.Smb
                     //https://blogs.msdn.microsoft.com/dgorti/2005/09/18/only-one-usage-of-each-socket-address-protocolnetwork-addressport-is-normally-permitted/
                     Socket.Bind(new IPEndPoint(LocalAddr, 0));
 
-                    Socket.Connect(new IPEndPoint(IPAddress.Parse(Address.GetHostAddress()), 
+                    Socket.Connect(new IPEndPoint(IPAddress.Parse(Address.GetHostAddress()),
                                                   port), // <- 445
                                    SmbConstants.ConnTimeout);
 
@@ -531,7 +538,7 @@ namespace SharpCifs.Smb
             {
                 var local = (IPEndPoint)this.Socket?.LocalEndPoint;
                 var remote = (IPEndPoint)this.Socket?.RemoteEndPoint;
-                
+
                 // IO Exception
                 throw new SmbException($"Failed to connect, {Address}  [ {local?.Address}:{local?.Port} --> {remote?.Address}:{remote?.Port} ]", te);
             }
@@ -661,7 +668,7 @@ namespace SharpCifs.Smb
                 Log.WriteLine("New data read: " + this);
                 Hexdump.ToHexdump(Log, Sbuf, 4, 32);
             }
-            for (;;)
+            for (; ; )
             {
                 if (Sbuf[0] == 0x00 && Sbuf[1] == 0x00 &&
                     Sbuf[4] == 0xFF &&
@@ -1038,7 +1045,7 @@ namespace SharpCifs.Smb
             string[] arr = new string[4];
             long expiration = Runtime.CurrentTimeMillis() + Dfs.Ttl * 1000;
             int di = 0;
-            for (;;)
+            for (; ; )
             {
                 dr.ResolveHashes = auth.HashesExternal;
                 dr.Ttl = resp.Referrals[di].Ttl;
